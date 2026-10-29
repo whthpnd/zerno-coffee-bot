@@ -1,0 +1,8 @@
+services:
+  bot:
+    build: .
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+      - ./menu.json:/app/menu.json:ro
+    restart: unless-stopped
