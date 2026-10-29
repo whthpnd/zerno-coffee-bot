@@ -3,6 +3,7 @@ from html import escape
 
 from aiogram import Bot, F, Router
 from aiogram.enums import ChatAction
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -35,6 +36,8 @@ from ..keyboards import (
 router = Router()
 
 TIME_RE = re.compile(r"^([01]?\d|2[0-3])[:.]([0-5]\d)$")
+
+MENU_TEXT = "Выберите раздел меню 👇\nЗерно обжариваем сами, выпечка — свежая каждое утро."
 
 
 class Checkout(StatesGroup):
@@ -78,12 +81,12 @@ async def contacts(message: Message, catalog: Catalog):
 
 @router.message(F.text == BTN_MENU)
 async def menu(message: Message, catalog: Catalog):
-    await message.answer("Что будете?", reply_markup=categories_kb(catalog))
+    await message.answer(MENU_TEXT, reply_markup=categories_kb(catalog))
 
 
 @router.callback_query(MenuCB.filter(F.action == "cats"))
 async def menu_categories(callback: CallbackQuery, catalog: Catalog):
-    await callback.message.edit_text("Что будете?", reply_markup=categories_kb(catalog))
+    await callback.message.edit_text(MENU_TEXT, reply_markup=categories_kb(catalog))
     await callback.answer()
 
 
@@ -93,7 +96,9 @@ async def menu_category(callback: CallbackQuery, callback_data: MenuCB, catalog:
     if category is None:
         await callback.answer("Раздел не найден")
         return
-    await callback.message.edit_text(f"<b>{category.title}</b>", reply_markup=items_kb(category))
+    await callback.message.edit_text(
+        f"<b>{category.title}</b>\nВыберите позицию — объём и цену покажу дальше.", reply_markup=items_kb(category)
+    )
     await callback.answer()
 
 
@@ -172,12 +177,12 @@ async def checkout_start(callback: CallbackQuery, state: FSMContext):
 
 
 async def ask_comment(message: Message, state: FSMContext, pickup: str):
-    await state.update_data(pickup=pickup)
     await state.set_state(Checkout.comment)
-    await message.answer(
+    prompt = await message.answer(
         "Есть пожелания? Например: «на овсяном», «без сахара», «покрепче».",
         reply_markup=comment_kb(),
     )
+    await state.update_data(pickup=pickup, comment_prompt_id=prompt.message_id)
 
 
 @router.callback_query(Checkout.pickup, CheckoutCB.filter(F.action == "pickup"))
@@ -215,7 +220,14 @@ async def checkout_skip_comment(callback: CallbackQuery, state: FSMContext):
 
 
 @router.message(Checkout.comment, F.text)
-async def checkout_comment(message: Message, state: FSMContext):
+async def checkout_comment(message: Message, state: FSMContext, bot: Bot):
+    # Убираем кнопку «Без комментария» — комментарий уже написан
+    prompt_id = (await state.get_data()).get("comment_prompt_id")
+    if prompt_id:
+        try:
+            await bot.edit_message_reply_markup(chat_id=message.chat.id, message_id=prompt_id, reply_markup=None)
+        except TelegramBadRequest:
+            pass
     await ask_confirm(message, state, message.text.strip()[:300])
 
 
